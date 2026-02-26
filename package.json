@@ -1,11 +1,10 @@
 {
   "name": "brain-3d",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "3D brain wireframe visualization — pure Canvas 2D, zero dependencies",
-  "main": "brain-wireframe.js",
+  "main": "brain-3d.js",
   "files": [
-    "brain-wireframe.js",
-    "complete-brain-wireframe.js",
+    "brain-3d.js",
     "README.md"
   ],
   "scripts": {

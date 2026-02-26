@@ -1,6 +1,7 @@
-# Neural Brain 3D Wireframe
+# brain-3d
 
-Pure Canvas 2D brain wireframe — zero dependencies.
+Interactive 3D brain wireframe — one file, zero dependencies, pure Canvas 2D.  
+Click & drag to pull the mesh. Touch-friendly.
 
 ## Quick Start
 
@@ -9,44 +10,45 @@ python3 -m http.server 9000
 # open http://localhost:9000
 ```
 
-## Usage (browser)
+## Usage
 
 ```html
 <canvas id="brain"></canvas>
-<script src="complete-brain-wireframe.js"></script>
-<script src="brain-wireframe.js"></script>
+<script src="brain-3d.js"></script>
 <script>
-  BrainWireframe.render('brain', { width: 900, height: 700 });
+  Brain3D.render('brain');
 </script>
 ```
 
 ## Options
 
 ```js
-BrainWireframe.render('brain', {
-  width: 900,          // canvas width
-  height: 700,         // canvas height
-  color: 'rgba(0, 170, 255, 0.15)', // edge color
-  lineWidth: 0.5,      // edge thickness
-  speed: 0.005,        // rotation speed
-  autoRotate: true     // auto-rotate on/off
+Brain3D.render('brain', {
+  width: 900,              // canvas width
+  height: 700,             // canvas height
+  color: 'rgba(0,170,255,0.15)', // wireframe color
+  lineWidth: 0.5,          // edge thickness
+  speed: 0.005,            // rotation speed
+  autoRotate: true,        // auto-rotate
+  interactive: true,       // click & drag mesh
+  dragRadius: 40,          // pull radius (px)
+  dragStrength: 1.0,       // pull force
+  springBack: 0.05         // snap-back speed
 });
 ```
 
 ## Controls
 
-`render()` returns a control object:
-
 ```js
-const brain = BrainWireframe.render('brain');
-brain.stop();          // pause
-brain.start();         // resume
-brain.setAngle(1.5);   // set rotation angle
-brain.setSpeed(0.01);  // change speed
+const brain = Brain3D.render('brain');
+brain.stop();            // pause
+brain.start();           // resume
+brain.setAngle(1.5);     // set rotation
+brain.setSpeed(0.01);    // change speed
+brain.reset();           // reset mesh deformation
 ```
 
 ## Files
 
-- `brain-wireframe.js` — renderer (importable module)
-- `complete-brain-wireframe.js` — brain mesh data (47K vertices, 282K edges)
+- `brain-3d.js` — data + renderer (single file, importable)
 - `index.html` — minimal demo
