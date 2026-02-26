@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Brain Wireframe</title>
+    <style>
+        body {
+            margin: 0;
+            background: #111;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+        }
+
+        canvas {
+            background: #111;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="brain"></canvas>
+    <script src="complete-brain-wireframe.js"></script>
+    <script src="brain-wireframe.js"></script>
+    <script>
+        BrainWireframe.render('brain', { width: 900, height: 700 });
+    </script>
+</body>
+
+</html>

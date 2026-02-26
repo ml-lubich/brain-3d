@@ -1,0 +1,23 @@
+{
+  "name": "neural-brain-3d",
+  "version": "2.0.0",
+  "description": "3D brain wireframe visualization — pure Canvas 2D, zero dependencies",
+  "main": "brain-wireframe.js",
+  "files": [
+    "brain-wireframe.js",
+    "complete-brain-wireframe.js",
+    "README.md"
+  ],
+  "scripts": {
+    "start": "python3 -m http.server 9000"
+  },
+  "keywords": [
+    "brain",
+    "wireframe",
+    "3d",
+    "canvas",
+    "visualization",
+    "neuroscience"
+  ],
+  "license": "MIT"
+}

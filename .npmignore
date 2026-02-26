@@ -1,0 +1,22 @@
+# Source files (only ship built dist)
+src/
+examples/
+scripts/
+
+# Config files
+tsconfig.json
+rollup.config.js
+.gitignore
+
+# Development files
+*.log
+.env*
+coverage/
+
+# Demo files
+*.html
+
+# Keep only essential files for users
+# dist/ - built files
+# README.md - documentation  
+# package.json - package info 
