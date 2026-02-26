@@ -1,5 +1,5 @@
 {
-  "name": "neural-brain-3d",
+  "name": "brain-3d",
   "version": "2.0.0",
   "description": "3D brain wireframe visualization — pure Canvas 2D, zero dependencies",
   "main": "brain-wireframe.js",
