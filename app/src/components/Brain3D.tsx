@@ -2,18 +2,12 @@
 
 import { useRef, useEffect, useState } from "react"
 
-/* ─────────────────────────────────────────────────────────────────────
- * Brain3D — Interactive 3D brain wireframe with traveling electric orbs
+/* ─────────────────────────────────────────────────────────────────
+ * Brain3D — Configurable interactive 3D brain wireframe
  *
- * Features:
- *  - Pure Canvas 2D, zero 3D-library dependencies
- *  - Click & drag to pull/deform the mesh (spring-back) — extra stretchy
- *  - Rotation continues while dragging
- *  - Orbs travel continuously along edges like neural signals
- *    with a trailing energy path that fades behind them
- *  - Toggle rotation on/off
- *  - Toggle orbs on/off
- * ───────────────────────────────────────────────────────────────────── */
+ * Every visual/performance knob is exposed as a prop so devs can tune
+ * the component for their use-case without touching internals.
+ * ───────────────────────────────────────────────────────────────── */
 
 declare global {
     interface Window {
@@ -22,72 +16,149 @@ declare global {
     }
 }
 
-interface Brain3DProps {
+/* ── Public config interface ──────────────────────────────────────── */
+export interface Brain3DProps {
+    /** Canvas width in CSS pixels. Ignored when `responsive` is true. */
     width?: number
+    /** Canvas height in CSS pixels. Ignored when `responsive` is true. */
     height?: number
+    /** When true the canvas fills its parent and auto-resizes. */
+    responsive?: boolean
+    /** Extra CSS class on the wrapper div. */
     className?: string
+
+    // Performance
+    /** Render every Nth edge (1 = all, 2 = half, 4 = quarter).
+     *  Higher values = cheaper rendering on low-end devices. */
+    edgeStride?: number
+    /** Path to the brain-data.js file served from public/. */
+    dataPath?: string
+
+    // Orbs
+    /** Number of traveling orbs. 0 = none. */
+    orbCount?: number
+    /** How many trail segments each orb leaves behind. */
+    orbTrailLength?: number
+    /** Base orb travel speed (0-1 range per frame). */
+    orbSpeed?: number
+    /** Minimum hue for orbs (HSL). */
+    orbHueMin?: number
+    /** Maximum hue for orbs (HSL). */
+    orbHueMax?: number
+    /** Base orb radius in px. */
+    orbSize?: number
+    /** Start with orbs visible? */
+    orbsOn?: boolean
+
+    // Rotation
+    /** Start with rotation enabled? */
+    rotationOn?: boolean
+    /** Rotation speed in radians per frame. */
+    rotationSpeed?: number
+
+    // Drag / pull
+    /** How many hops of neighbours to grab when pulling. */
+    grabDepth?: number
+    /** Spring-back factor (0 = never returns, 1 = instant snap). */
+    springBack?: number
+
+    // Wireframe look
+    /** Wireframe colour (any CSS colour string). */
+    wireColor?: string
+    /** Wireframe line width. */
+    wireWidth?: number
+    /** Background colour. */
+    bgColor?: string
+
+    // Controls
+    /** Show the toggle buttons. */
+    showControls?: boolean
 }
 
-/* Each orb keeps a history of the last N (edge, t) positions so we can
-   draw a fading energy trail behind it. */
-interface TrailPoint {
-    edgeIdx: number
-    t: number
-}
-
+/* Internal types */
+interface TrailPoint { edgeIdx: number; t: number }
 interface Orb {
-    edgeIdx: number
-    t: number
-    speed: number       // always positive — direction encoded in `dir`
-    dir: 1 | -1         // +1 = 0→1, -1 = 1→0
-    hue: number
-    size: number
-    trail: TrailPoint[] // recent positions, newest first
+    edgeIdx: number; t: number; speed: number; dir: 1 | -1
+    hue: number; size: number; trail: TrailPoint[]
 }
 
-const ORB_COUNT = 90
-const TRAIL_LENGTH = 18            // how many trail dots per orb
+/* Defaults */
+const DEFAULTS = {
+    width: 960, height: 700, responsive: false,
+    edgeStride: 1, dataPath: "/brain-data.js",
+    orbCount: 90, orbTrailLength: 18, orbSpeed: 0.015,
+    orbHueMin: 185, orbHueMax: 235, orbSize: 2.5, orbsOn: true,
+    rotationOn: true, rotationSpeed: 0.005,
+    grabDepth: 4, springBack: 0.012,
+    wireColor: "rgba(0,170,255,0.13)", wireWidth: 0.4,
+    bgColor: "#080810", showControls: true,
+} as const
 
-export function Brain3D({ width = 960, height = 700, className = "" }: Brain3DProps) {
+export function Brain3D(props: Brain3DProps) {
+    const cfg = { ...DEFAULTS, ...props }
+
+    const wrapperRef = useRef<HTMLDivElement>(null)
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const [loaded, setLoaded] = useState(false)
-    const [rotating, setRotating] = useState(true)
-    const [showOrbs, setShowOrbs] = useState(true)
+    const [rotating, setRotating] = useState(cfg.rotationOn)
+    const [showOrbs, setShowOrbs] = useState(cfg.orbsOn)
 
-    const rotatingRef = useRef(true)
-    const showOrbsRef = useRef(true)
+    // Sync toggles to animation via refs (no re-render)
+    const rotatingRef = useRef(cfg.rotationOn)
+    const showOrbsRef = useRef(cfg.orbsOn)
     rotatingRef.current = rotating
     showOrbsRef.current = showOrbs
 
-    // Load brain data via script tag
+    // Responsive size tracking
+    const [size, setSize] = useState({ w: cfg.width, h: cfg.height })
+
+    useEffect(() => {
+        if (!cfg.responsive || !wrapperRef.current) return
+        const ro = new ResizeObserver(([entry]) => {
+            const { width: w, height: h } = entry.contentRect
+            if (w > 0 && h > 0) setSize({ w: Math.round(w), h: Math.round(h) })
+        })
+        ro.observe(wrapperRef.current)
+        return () => ro.disconnect()
+    }, [cfg.responsive])
+
+    const W = cfg.responsive ? size.w : cfg.width
+    const H = cfg.responsive ? size.h : cfg.height
+
+    // Load brain data
     useEffect(() => {
         if (window.COMPLETE_BRAIN_VERTICES) { setLoaded(true); return }
         const script = document.createElement("script")
-        script.src = "/brain-data.js"
+        script.src = cfg.dataPath
         script.onload = () => setLoaded(true)
         document.head.appendChild(script)
         return () => { script.remove() }
-    }, [])
+    }, [cfg.dataPath])
 
-    // ── Main render loop ─────────────────────────────────────────────
+    // Main render loop
     useEffect(() => {
         if (!loaded || !canvasRef.current) return
 
         const canvas = canvasRef.current
         const ctx = canvas.getContext("2d")!
-        canvas.width = width
-        canvas.height = height
+        canvas.width = W
+        canvas.height = H
 
-        const verts = window.COMPLETE_BRAIN_VERTICES
-        const edges = window.COMPLETE_BRAIN_EDGES
-        if (!verts || !edges) return
+        const allVerts = window.COMPLETE_BRAIN_VERTICES
+        const allEdges = window.COMPLETE_BRAIN_EDGES
+        if (!allVerts || !allEdges) return
 
+        // Apply edgeStride for performance
+        const stride = Math.max(1, Math.round(cfg.edgeStride))
+        const edges: number[][] = stride === 1
+            ? allEdges
+            : allEdges.filter((_: number[], i: number) => i % stride === 0)
+
+        const verts = allVerts
         const numVerts = verts.length
         const numEdges = edges.length
 
-        // ── Build adjacency map (vertex → edge indices) ──────────────
-        // This lets orbs find connected edges instantly instead of
-        // random-searching, so they never "despawn".
+        // Build adjacency (vertex -> edge indices in drawn edges)
         const adj: number[][] = new Array(numVerts)
         for (let i = 0; i < numVerts; i++) adj[i] = []
         for (let i = 0; i < numEdges; i++) {
@@ -95,7 +166,17 @@ export function Brain3D({ width = 960, height = 700, className = "" }: Brain3DPr
             adj[edges[i][1]].push(i)
         }
 
-        // ── Bounding box ─────────────────────────────────────────────
+        // Vertex adjacency (vertex -> neighbour vertex indices)
+        // Built from ALL edges so pulling always finds neighbours
+        // even when edgeStride > 1.
+        const vertAdj: Set<number>[] = new Array(numVerts)
+        for (let i = 0; i < numVerts; i++) vertAdj[i] = new Set()
+        for (let i = 0; i < allEdges.length; i++) {
+            vertAdj[allEdges[i][0]].add(allEdges[i][1])
+            vertAdj[allEdges[i][1]].add(allEdges[i][0])
+        }
+
+        // Bounding box
         let minX = Infinity, maxX = -Infinity
         let minY = Infinity, maxY = -Infinity
         let minZ = Infinity, maxZ = -Infinity
@@ -105,90 +186,68 @@ export function Brain3D({ width = 960, height = 700, className = "" }: Brain3DPr
             if (v[1] < minY) minY = v[1]; if (v[1] > maxY) maxY = v[1]
             if (v[2] < minZ) minZ = v[2]; if (v[2] > maxZ) maxZ = v[2]
         }
-        const cx = (minX + maxX) / 2
-        const cy = (minY + maxY) / 2
-        const cz = (minZ + maxZ) / 2
+        const bboxCX = (minX + maxX) / 2, bboxCY = (minY + maxY) / 2, bboxCZ = (minZ + maxZ) / 2
         const range = Math.max(maxX - minX, maxY - minY, maxZ - minZ)
-        const scale = (Math.min(width, height) * 0.78) / range
+        const sc = (Math.min(W, H) * 0.78) / range
 
-        // ── Vertex displacement (for drag interaction) ───────────────
-        const dx = new Float32Array(numVerts)
-        const dy = new Float32Array(numVerts)
-
-        // ── Projection buffers ───────────────────────────────────────
+        // Buffers
+        const dxArr = new Float32Array(numVerts)
+        const dyArr = new Float32Array(numVerts)
         const projX = new Float32Array(numVerts)
         const projY = new Float32Array(numVerts)
 
-        // ── Tilt so brain is upright ─────────────────────────────────
         const tilt = Math.PI * 0.45
         const cosT = Math.cos(tilt), sinT = Math.sin(tilt)
 
-        // ── Mouse / touch state ──────────────────────────────────────
+        // Mouse / touch state
         let mouseDown = false
-        let mouseX = 0, mouseY = 0
-        let prevMouseX = 0, prevMouseY = 0
-
-        // ── Thread-pull: grab nearest vertex + neighbours ─────────────
-        // On click we find the closest vertex, then collect it + its
-        // directly-connected neighbours. Only those vertices get dragged,
-        // so you pull individual wires, not a big circular blob.
-        const GRAB_DEPTH = 2           // how many hops of neighbours to grab
-        const springBack = 0.02        // slow spring-back so threads stretch far
+        let mouseX = 0, mouseY = 0, prevMouseX = 0, prevMouseY = 0
         let grabbedVerts: { idx: number; weight: number }[] = []
 
-        // ── Helper: pick a random connected edge from a vertex ───────
-        function nextEdgeFrom(vertIdx: number, avoidEdge: number): { edgeIdx: number; dir: 1 | -1 } {
+        // Orb helpers
+        function nextEdgeFrom(vertIdx: number, avoidEdge: number) {
             const bucket = adj[vertIdx]
-            if (!bucket || bucket.length === 0) {
-                // orphan vertex — shouldn't happen but be safe
-                const e = Math.floor(Math.random() * numEdges)
-                return { edgeIdx: e, dir: 1 }
-            }
-            // pick a random neighbour edge (prefer not the one we came from)
+            if (!bucket || bucket.length === 0) return { edgeIdx: Math.floor(Math.random() * numEdges), dir: 1 as const }
             let pick = bucket[Math.floor(Math.random() * bucket.length)]
-            if (bucket.length > 1 && pick === avoidEdge) {
-                pick = bucket[Math.floor(Math.random() * bucket.length)]
-            }
-            const dir: 1 | -1 = edges[pick][0] === vertIdx ? 1 : -1
-            return { edgeIdx: pick, dir }
+            if (bucket.length > 1 && pick === avoidEdge) pick = bucket[Math.floor(Math.random() * bucket.length)]
+            return { edgeIdx: pick, dir: (edges[pick][0] === vertIdx ? 1 : -1) as 1 | -1 }
         }
 
-        // ── Create orbs ──────────────────────────────────────────────
+        // Create orbs
         const orbs: Orb[] = []
-        for (let i = 0; i < ORB_COUNT; i++) {
-            const edgeIdx = Math.floor(Math.random() * numEdges)
+        for (let i = 0; i < cfg.orbCount; i++) {
             orbs.push({
-                edgeIdx,
+                edgeIdx: Math.floor(Math.random() * numEdges),
                 t: Math.random(),
-                speed: 0.012 + Math.random() * 0.018,
+                speed: cfg.orbSpeed * (0.6 + Math.random() * 0.8),
                 dir: Math.random() > 0.5 ? 1 : -1,
-                hue: 185 + Math.random() * 50,  // cyan-blue
-                size: 2 + Math.random() * 2.5,
+                hue: cfg.orbHueMin + Math.random() * (cfg.orbHueMax - cfg.orbHueMin),
+                size: cfg.orbSize * (0.8 + Math.random() * 0.5),
                 trail: [],
             })
         }
 
-        // ── State ────────────────────────────────────────────────────
         let angle = 0
         let animId: number
 
+        // Projection
         function project() {
             const cosA = Math.cos(angle), sinA = Math.sin(angle)
             for (let i = 0; i < numVerts; i++) {
-                const x = (verts[i][0] - cx) * scale
-                const y = (verts[i][1] - cy) * scale
-                const z = (verts[i][2] - cz) * scale
+                const x = (verts[i][0] - bboxCX) * sc
+                const y = (verts[i][1] - bboxCY) * sc
+                const z = (verts[i][2] - bboxCZ) * sc
                 const ty = y * cosT - z * sinT
                 const tz = y * sinT + z * cosT
-                const rx = x * cosA - tz * sinA
-                projX[i] = rx + width / 2 + dx[i]
-                projY[i] = ty + height / 2 + dy[i]
+                projX[i] = (x * cosA - tz * sinA) + W / 2 + dxArr[i]
+                projY[i] = ty + H / 2 + dyArr[i]
             }
         }
 
+        // Draw wireframe
         function drawWireframe() {
-            ctx.strokeStyle = "rgba(0, 170, 255, 0.13)"
-            ctx.lineWidth = 0.4
+            ctx.strokeStyle = cfg.wireColor
+            ctx.lineWidth = cfg.wireWidth
             ctx.beginPath()
             for (let j = 0; j < numEdges; j++) {
                 const e = edges[j]
@@ -198,109 +257,72 @@ export function Brain3D({ width = 960, height = 700, className = "" }: Brain3DPr
             ctx.stroke()
         }
 
-        /* ── Interpolate a (edgeIdx, t) pair to screen coords ──────── */
-        function edgePos(edgeIdx: number, t: number): [number, number] {
-            const e = edges[edgeIdx]
-            const x = projX[e[0]] + (projX[e[1]] - projX[e[0]]) * t
-            const y = projY[e[0]] + (projY[e[1]] - projY[e[0]]) * t
-            return [x, y]
+        // Edge interpolation
+        function edgePos(ei: number, t: number): [number, number] {
+            const e = edges[ei]
+            return [
+                projX[e[0]] + (projX[e[1]] - projX[e[0]]) * t,
+                projY[e[0]] + (projY[e[1]] - projY[e[0]]) * t,
+            ]
         }
 
-        /* ── Advance an orb and handle edge transitions ────────────── */
+        // Advance orb along edges
         function advanceOrb(orb: Orb) {
-            // Push current position to trail BEFORE moving
             orb.trail.unshift({ edgeIdx: orb.edgeIdx, t: orb.t })
-            if (orb.trail.length > TRAIL_LENGTH) orb.trail.length = TRAIL_LENGTH
-
-            // Move
+            if (orb.trail.length > cfg.orbTrailLength) orb.trail.length = cfg.orbTrailLength
             orb.t += orb.speed * orb.dir
-
-            // Crossed an endpoint → hop to a connected edge
             if (orb.t > 1) {
-                const overshoot = orb.t - 1
-                const endVert = edges[orb.edgeIdx][1]
-                const next = nextEdgeFrom(endVert, orb.edgeIdx)
-                orb.edgeIdx = next.edgeIdx
-                orb.dir = next.dir
-                orb.t = orb.dir === 1 ? overshoot : 1 - overshoot
+                const ov = orb.t - 1, n = nextEdgeFrom(edges[orb.edgeIdx][1], orb.edgeIdx)
+                orb.edgeIdx = n.edgeIdx; orb.dir = n.dir; orb.t = orb.dir === 1 ? ov : 1 - ov
             } else if (orb.t < 0) {
-                const overshoot = -orb.t
-                const endVert = edges[orb.edgeIdx][0]
-                const next = nextEdgeFrom(endVert, orb.edgeIdx)
-                orb.edgeIdx = next.edgeIdx
-                orb.dir = next.dir
-                orb.t = orb.dir === 1 ? overshoot : 1 - overshoot
+                const ov = -orb.t, n = nextEdgeFrom(edges[orb.edgeIdx][0], orb.edgeIdx)
+                orb.edgeIdx = n.edgeIdx; orb.dir = n.dir; orb.t = orb.dir === 1 ? ov : 1 - ov
             }
-            // Clamp (safety)
             orb.t = Math.max(0, Math.min(1, orb.t))
         }
 
+        // Draw orbs + trails
         function drawOrbs() {
             if (!showOrbsRef.current) return
-
-            for (let i = 0; i < orbs.length; i++) {
-                const orb = orbs[i]
+            for (const orb of orbs) {
                 advanceOrb(orb)
-
                 const [ox, oy] = edgePos(orb.edgeIdx, orb.t)
 
-                // ── Trailing energy path ──────────────────────────────
-                // Draw from oldest to newest so newer segments paint on top
+                // Trail
                 const trail = orb.trail
                 if (trail.length > 1) {
                     for (let k = trail.length - 1; k >= 1; k--) {
-                        const age = k / trail.length  // 1 = oldest, ~0 = newest
-                        const alpha = (1 - age) * 0.7
-                        const lum = 50 + (1 - age) * 35  // brighter near head
+                        const age = k / trail.length
                         const [x1, y1] = edgePos(trail[k].edgeIdx, trail[k].t)
                         const [x2, y2] = edgePos(trail[k - 1].edgeIdx, trail[k - 1].t)
-
-                        // Skip if the two trail points are very far apart
-                        // (different edges that aren't visually connected)
-                        const d2 = (x2 - x1) ** 2 + (y2 - y1) ** 2
-                        if (d2 > 2500) continue  // ~50px gap = edge hop
-
-                        ctx.strokeStyle = `hsla(${orb.hue}, 95%, ${lum}%, ${alpha})`
+                        if ((x2 - x1) ** 2 + (y2 - y1) ** 2 > 2500) continue
+                        ctx.strokeStyle = `hsla(${orb.hue},95%,${50 + (1 - age) * 35}%,${(1 - age) * 0.7})`
                         ctx.lineWidth = orb.size * (1 - age * 0.65)
-                        ctx.beginPath()
-                        ctx.moveTo(x1, y1)
-                        ctx.lineTo(x2, y2)
-                        ctx.stroke()
+                        ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke()
                     }
-
-                    // Line from newest trail point to current position
                     const [tx, ty] = edgePos(trail[0].edgeIdx, trail[0].t)
-                    const d2 = (ox - tx) ** 2 + (oy - ty) ** 2
-                    if (d2 < 2500) {
-                        ctx.strokeStyle = `hsla(${orb.hue}, 100%, 78%, 0.8)`
+                    if ((ox - tx) ** 2 + (oy - ty) ** 2 < 2500) {
+                        ctx.strokeStyle = `hsla(${orb.hue},100%,78%,0.8)`
                         ctx.lineWidth = orb.size * 0.9
-                        ctx.beginPath()
-                        ctx.moveTo(tx, ty)
-                        ctx.lineTo(ox, oy)
-                        ctx.stroke()
+                        ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(ox, oy); ctx.stroke()
                     }
                 }
 
-                // ── Outer glow ────────────────────────────────────────
-                const grad = ctx.createRadialGradient(ox, oy, 0, ox, oy, orb.size * 7)
-                grad.addColorStop(0, `hsla(${orb.hue}, 100%, 92%, 0.9)`)
-                grad.addColorStop(0.12, `hsla(${orb.hue}, 100%, 70%, 0.55)`)
-                grad.addColorStop(0.35, `hsla(${orb.hue}, 90%, 50%, 0.15)`)
-                grad.addColorStop(1, `hsla(${orb.hue}, 80%, 40%, 0)`)
-                ctx.fillStyle = grad
-                ctx.beginPath()
-                ctx.arc(ox, oy, orb.size * 7, 0, Math.PI * 2)
-                ctx.fill()
+                // Glow
+                const g = ctx.createRadialGradient(ox, oy, 0, ox, oy, orb.size * 7)
+                g.addColorStop(0, `hsla(${orb.hue},100%,92%,0.9)`)
+                g.addColorStop(0.12, `hsla(${orb.hue},100%,70%,0.55)`)
+                g.addColorStop(0.35, `hsla(${orb.hue},90%,50%,0.15)`)
+                g.addColorStop(1, `hsla(${orb.hue},80%,40%,0)`)
+                ctx.fillStyle = g; ctx.beginPath(); ctx.arc(ox, oy, orb.size * 7, 0, Math.PI * 2); ctx.fill()
 
-                // ── White-hot core ────────────────────────────────────
-                ctx.fillStyle = `hsla(${orb.hue}, 60%, 97%, 0.95)`
-                ctx.beginPath()
-                ctx.arc(ox, oy, orb.size * 0.7, 0, Math.PI * 2)
-                ctx.fill()
+                // Core
+                ctx.fillStyle = `hsla(${orb.hue},60%,97%,0.95)`
+                ctx.beginPath(); ctx.arc(ox, oy, orb.size * 0.7, 0, Math.PI * 2); ctx.fill()
             }
         }
 
-        /* ── Find the closest vertex to a screen point ──────────── */
+        // Thread-pull: find nearest vertex
         function closestVertex(sx: number, sy: number): number {
             let best = -1, bestD2 = Infinity
             for (let i = 0; i < numVerts; i++) {
@@ -310,101 +332,73 @@ export function Brain3D({ width = 960, height = 700, className = "" }: Brain3DPr
             return best
         }
 
-        /* ── Collect a vertex + its N-hop neighbours with falloff ───── */
-        function collectThreadVerts(centerIdx: number): { idx: number; weight: number }[] {
-            const visited = new Map<number, number>() // idx → hop distance
-            const queue: [number, number][] = [[centerIdx, 0]]
-            visited.set(centerIdx, 0)
-
+        // Thread-pull: BFS collect with weight falloff
+        function collectThreadVerts(center: number) {
+            const depth = cfg.grabDepth
+            const visited = new Map<number, number>()
+            const queue: [number, number][] = [[center, 0]]
+            visited.set(center, 0)
             while (queue.length > 0) {
-                const [vi, depth] = queue.shift()!
-                if (depth >= GRAB_DEPTH) continue
-                // Walk adjacency: each edge from this vertex
-                for (const eIdx of adj[vi]) {
-                    const other = edges[eIdx][0] === vi ? edges[eIdx][1] : edges[eIdx][0]
-                    if (!visited.has(other)) {
-                        visited.set(other, depth + 1)
-                        queue.push([other, depth + 1])
-                    }
+                const [vi, d] = queue.shift()!
+                if (d >= depth) continue
+                for (const nb of vertAdj[vi]) {
+                    if (!visited.has(nb)) { visited.set(nb, d + 1); queue.push([nb, d + 1]) }
                 }
             }
-
             const result: { idx: number; weight: number }[] = []
             visited.forEach((hop, idx) => {
-                // Weight: 1.0 at center, falls off with each hop
-                result.push({ idx, weight: 1 / (1 + hop * 1.2) })
+                result.push({ idx, weight: 1 / (1 + hop * 0.6) })
             })
             return result
         }
 
-        /* ── Apply drag only to grabbed thread vertices ─────────────── */
-        function applyThreadDrag(moveX: number, moveY: number) {
+        function applyThreadDrag(mx: number, my: number) {
             for (const gv of grabbedVerts) {
-                dx[gv.idx] += moveX * gv.weight
-                dy[gv.idx] += moveY * gv.weight
+                dxArr[gv.idx] += mx * gv.weight
+                dyArr[gv.idx] += my * gv.weight
             }
         }
 
-        // ── Main loop ────────────────────────────────────────────────
+        // Main loop
         function draw() {
-            ctx.clearRect(0, 0, width, height)
+            ctx.clearRect(0, 0, W, H)
             project()
             drawWireframe()
             drawOrbs()
 
-            // Spring back (soft)
             for (let i = 0; i < numVerts; i++) {
-                dx[i] *= (1 - springBack)
-                dy[i] *= (1 - springBack)
+                dxArr[i] *= (1 - cfg.springBack)
+                dyArr[i] *= (1 - cfg.springBack)
             }
 
-            if (rotatingRef.current) angle += 0.005
+            if (rotatingRef.current) angle += cfg.rotationSpeed
             animId = requestAnimationFrame(draw)
         }
 
-        // ── Event handlers ───────────────────────────────────────────
+        // Events
         function getPos(e: MouseEvent | TouchEvent) {
-            const rect = canvas.getBoundingClientRect()
-            const clientX = "touches" in e ? e.touches[0].clientX : e.clientX
-            const clientY = "touches" in e ? e.touches[0].clientY : e.clientY
-            return [
-                (clientX - rect.left) * (width / rect.width),
-                (clientY - rect.top) * (height / rect.height),
-            ]
+            const r = canvas.getBoundingClientRect()
+            const pcx = "touches" in e ? e.touches[0].clientX : e.clientX
+            const pcy = "touches" in e ? e.touches[0].clientY : e.clientY
+            return [(pcx - r.left) * (W / r.width), (pcy - r.top) * (H / r.height)]
         }
 
         function onDown(e: MouseEvent | TouchEvent) {
             if ("touches" in e) e.preventDefault()
-            mouseDown = true
-            canvas.style.cursor = "grabbing"
-            const p = getPos(e)
-            mouseX = prevMouseX = p[0]
-            mouseY = prevMouseY = p[1]
-
-            // Find the nearest vertex and grab its local thread
+            mouseDown = true; canvas.style.cursor = "grabbing"
+            const p = getPos(e); mouseX = prevMouseX = p[0]; mouseY = prevMouseY = p[1]
             const nearest = closestVertex(mouseX, mouseY)
-            if (nearest >= 0) {
-                grabbedVerts = collectThreadVerts(nearest)
-            }
+            if (nearest >= 0) grabbedVerts = collectThreadVerts(nearest)
         }
-
         function onMove(e: MouseEvent | TouchEvent) {
             if ("touches" in e) e.preventDefault()
-            const p = getPos(e)
-            mouseX = p[0]; mouseY = p[1]
+            const p = getPos(e); mouseX = p[0]; mouseY = p[1]
             if (mouseDown && grabbedVerts.length > 0) {
-                const moveX = mouseX - prevMouseX
-                const moveY = mouseY - prevMouseY
-                applyThreadDrag(moveX, moveY)
+                applyThreadDrag(mouseX - prevMouseX, mouseY - prevMouseY)
                 prevMouseX = mouseX; prevMouseY = mouseY
             }
         }
-
-        function onUp() {
-            mouseDown = false
-            grabbedVerts = []
-            canvas.style.cursor = "grab"
-        }
+        function onUp() { mouseDown = false; grabbedVerts = []; canvas.style.cursor = "grab" }
 
         canvas.addEventListener("mousedown", onDown)
         canvas.addEventListener("mousemove", onMove)
@@ -413,7 +407,6 @@ export function Brain3D({ width = 960, height = 700, className = "" }: Brain3DPr
         canvas.addEventListener("touchstart", onDown, { passive: false })
         canvas.addEventListener("touchmove", onMove, { passive: false })
         canvas.addEventListener("touchend", onUp)
-
         canvas.style.cursor = "grab"
         draw()
 
@@ -427,37 +420,47 @@ export function Brain3D({ width = 960, height = 700, className = "" }: Brain3DPr
             canvas.removeEventListener("touchmove", onMove)
             canvas.removeEventListener("touchend", onUp)
         }
-    }, [loaded, width, height])
+    }, [loaded, W, H, cfg.edgeStride, cfg.orbCount, cfg.orbTrailLength,
+        cfg.orbSpeed, cfg.orbHueMin, cfg.orbHueMax, cfg.orbSize,
+        cfg.grabDepth, cfg.springBack, cfg.wireColor, cfg.wireWidth,
+        cfg.rotationSpeed, cfg.dataPath])
 
     return (
-        <div className={`relative ${className}`}>
-            {/* Controls */}
-            <div className="absolute top-3 right-3 z-10 flex gap-2">
-                <button
-                    onClick={() => setRotating(r => !r)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium backdrop-blur-sm border transition-all ${rotating
-                        ? "bg-blue-500/20 border-blue-400/40 text-blue-300 hover:bg-blue-500/30"
-                        : "bg-white/5 border-white/10 text-white/40 hover:bg-white/10"
-                        }`}
-                >
-                    {rotating ? "⟳ Rotation" : "⏸ Rotation"}
-                </button>
-                <button
-                    onClick={() => setShowOrbs(o => !o)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium backdrop-blur-sm border transition-all ${showOrbs
-                        ? "bg-cyan-500/20 border-cyan-400/40 text-cyan-300 hover:bg-cyan-500/30"
-                        : "bg-white/5 border-white/10 text-white/40 hover:bg-white/10"
-                        }`}
-                >
-                    {showOrbs ? "⚡ Orbs" : "○ Orbs"}
-                </button>
-            </div>
+        <div
+            ref={wrapperRef}
+            className={`relative ${cfg.responsive ? "w-full h-full" : ""} ${cfg.className ?? ""}`}
+        >
+            {cfg.showControls && (
+                <div className="absolute top-3 right-3 z-10 flex gap-2">
+                    <button
+                        onClick={() => setRotating(r => !r)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium backdrop-blur-sm border transition-all ${rotating
+                            ? "bg-blue-500/20 border-blue-400/40 text-blue-300 hover:bg-blue-500/30"
+                            : "bg-white/5 border-white/10 text-white/40 hover:bg-white/10"
+                            }`}
+                    >
+                        {rotating ? "⟳ Rotation" : "⏸ Rotation"}
+                    </button>
+                    <button
+                        onClick={() => setShowOrbs(o => !o)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium backdrop-blur-sm border transition-all ${showOrbs
+                            ? "bg-cyan-500/20 border-cyan-400/40 text-cyan-300 hover:bg-cyan-500/30"
+                            : "bg-white/5 border-white/10 text-white/40 hover:bg-white/10"
+                            }`}
+                    >
+                        {showOrbs ? "⚡ Orbs" : "○ Orbs"}
+                    </button>
+                </div>
+            )}
 
-            {/* Canvas */}
             <canvas
                 ref={canvasRef}
-                className="rounded-xl border border-white/10 bg-[#080810]"
-                style={{ width, height }}
+                className="rounded-xl border border-white/10"
+                style={{
+                    width: cfg.responsive ? "100%" : W,
+                    height: cfg.responsive ? "100%" : H,
+                    background: cfg.bgColor,
+                }}
             />
 
             {!loaded && (
