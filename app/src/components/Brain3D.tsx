@@ -127,10 +127,14 @@ export function Brain3D({ width = 960, height = 700, className = "" }: Brain3DPr
         let mouseDown = false
         let mouseX = 0, mouseY = 0
         let prevMouseX = 0, prevMouseY = 0
-        // ⬇ STRETCHIER: bigger radius, stronger pull, softer spring
-        const dragRadius = 120
-        const dragStrength = 2.4
-        const springBack = 0.025
+
+        // ── Thread-pull: grab nearest vertex + neighbours ─────────────
+        // On click we find the closest vertex, then collect it + its
+        // directly-connected neighbours. Only those vertices get dragged,
+        // so you pull individual wires, not a big circular blob.
+        const GRAB_DEPTH = 2           // how many hops of neighbours to grab
+        const springBack = 0.02        // slow spring-back so threads stretch far
+        let grabbedVerts: { idx: number; weight: number }[] = []
 
         // ── Helper: pick a random connected edge from a vertex ───────
         function nextEdgeFrom(vertIdx: number, avoidEdge: number): { edgeIdx: number; dir: 1 | -1 } {
@@ -296,28 +300,48 @@ export function Brain3D({ width = 960, height = 700, className = "" }: Brain3DPr
             }
         }
 
-        function drawDragCircle() {
-            if (!mouseDown) return
-            ctx.strokeStyle = "rgba(0, 255, 180, 0.35)"
-            ctx.lineWidth = 1
-            ctx.beginPath()
-            ctx.arc(mouseX, mouseY, dragRadius, 0, Math.PI * 2)
-            ctx.stroke()
+        /* ── Find the closest vertex to a screen point ──────────── */
+        function closestVertex(sx: number, sy: number): number {
+            let best = -1, bestD2 = Infinity
+            for (let i = 0; i < numVerts; i++) {
+                const d2 = (projX[i] - sx) ** 2 + (projY[i] - sy) ** 2
+                if (d2 < bestD2) { bestD2 = d2; best = i }
+            }
+            return best
         }
 
-        function applyDrag(mx: number, my: number, pmx: number, pmy: number) {
-            const moveX = mx - pmx
-            const moveY = my - pmy
-            const r2 = dragRadius * dragRadius
-            for (let i = 0; i < numVerts; i++) {
-                const distX = projX[i] - mx
-                const distY = projY[i] - my
-                const d2 = distX * distX + distY * distY
-                if (d2 < r2) {
-                    const influence = (1 - d2 / r2) * dragStrength
-                    dx[i] += moveX * influence
-                    dy[i] += moveY * influence
+        /* ── Collect a vertex + its N-hop neighbours with falloff ───── */
+        function collectThreadVerts(centerIdx: number): { idx: number; weight: number }[] {
+            const visited = new Map<number, number>() // idx → hop distance
+            const queue: [number, number][] = [[centerIdx, 0]]
+            visited.set(centerIdx, 0)
+
+            while (queue.length > 0) {
+                const [vi, depth] = queue.shift()!
+                if (depth >= GRAB_DEPTH) continue
+                // Walk adjacency: each edge from this vertex
+                for (const eIdx of adj[vi]) {
+                    const other = edges[eIdx][0] === vi ? edges[eIdx][1] : edges[eIdx][0]
+                    if (!visited.has(other)) {
+                        visited.set(other, depth + 1)
+                        queue.push([other, depth + 1])
+                    }
                 }
+            }
+
+            const result: { idx: number; weight: number }[] = []
+            visited.forEach((hop, idx) => {
+                // Weight: 1.0 at center, falls off with each hop
+                result.push({ idx, weight: 1 / (1 + hop * 1.2) })
+            })
+            return result
+        }
+
+        /* ── Apply drag only to grabbed thread vertices ─────────────── */
+        function applyThreadDrag(moveX: number, moveY: number) {
+            for (const gv of grabbedVerts) {
+                dx[gv.idx] += moveX * gv.weight
+                dy[gv.idx] += moveY * gv.weight
             }
         }
 
@@ -327,7 +351,6 @@ export function Brain3D({ width = 960, height = 700, className = "" }: Brain3DPr
             project()
             drawWireframe()
             drawOrbs()
-            drawDragCircle()
 
             // Spring back (soft)
             for (let i = 0; i < numVerts; i++) {
@@ -357,20 +380,29 @@ export function Brain3D({ width = 960, height = 700, className = "" }: Brain3DPr
             const p = getPos(e)
             mouseX = prevMouseX = p[0]
             mouseY = prevMouseY = p[1]
+
+            // Find the nearest vertex and grab its local thread
+            const nearest = closestVertex(mouseX, mouseY)
+            if (nearest >= 0) {
+                grabbedVerts = collectThreadVerts(nearest)
+            }
         }
 
         function onMove(e: MouseEvent | TouchEvent) {
             if ("touches" in e) e.preventDefault()
             const p = getPos(e)
             mouseX = p[0]; mouseY = p[1]
-            if (mouseDown) {
-                applyDrag(mouseX, mouseY, prevMouseX, prevMouseY)
+            if (mouseDown && grabbedVerts.length > 0) {
+                const moveX = mouseX - prevMouseX
+                const moveY = mouseY - prevMouseY
+                applyThreadDrag(moveX, moveY)
                 prevMouseX = mouseX; prevMouseY = mouseY
             }
         }
 
         function onUp() {
             mouseDown = false
+            grabbedVerts = []
             canvas.style.cursor = "grab"
         }
 
