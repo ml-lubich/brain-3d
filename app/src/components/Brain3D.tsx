@@ -97,9 +97,9 @@ interface Orb {
 const DEFAULTS = {
     width: 960, height: 700, responsive: false,
     edgeStride: 1, dataPath: "/brain-data.js",
-    orbCount: 90, orbTrailLength: 60, orbSpeed: 0.02,
-    orbHueMin: 185, orbHueMax: 235, orbSize: 3,
-    orbsOn: true, signalLifespan: 80,
+    orbCount: 30, orbTrailLength: 25, orbSpeed: 0.012,
+    orbHueMin: 185, orbHueMax: 235, orbSize: 2.5,
+    orbsOn: true, signalLifespan: 100,
     rotationOn: true, rotationSpeed: 0.003,
     initialTiltX: Math.PI * 0.45,
     grabDepth: 4, springBack: 0.012,
@@ -267,9 +267,21 @@ export function Brain3D(props: Brain3DProps) {
             orb.maxHops  = life
         }
 
-        /* create initial pool */
+        /* create initial pool — stagger across lifecycle so they
+           don't all appear at once at full brightness */
         const orbs: Orb[] = []
-        for (let i = 0; i < cfg.orbCount; i++) orbs.push(makeOrb())
+        for (let i = 0; i < cfg.orbCount; i++) {
+            const orb = makeOrb()
+            /* randomise where in life each orb starts */
+            const startFrac = Math.random()          // 0 = brand new, 1 = about to die
+            orb.hopsLeft = Math.max(1, Math.round(orb.maxHops * (1 - startFrac)))
+            /* give staggered orbs some trail built up already */
+            const preTrailLen = Math.round(startFrac * cfg.orbTrailLength * 0.5)
+            for (let k = 0; k < preTrailLen; k++) {
+                orb.trail.push({ edgeIdx: orb.edgeIdx, t: Math.max(0, orb.t - k * 0.02) })
+            }
+            orbs.push(orb)
+        }
 
         let animId: number
 
@@ -341,8 +353,8 @@ export function Brain3D(props: Brain3DProps) {
          * ============================================================== */
         function orbAlpha(orb: Orb): number {
             const lifeFrac = 1 - orb.hopsLeft / orb.maxHops   // 0 = new, 1 = dying
-            if (lifeFrac < 0.08) return lifeFrac / 0.08        // fade in
-            if (lifeFrac > 0.7)  return (1 - lifeFrac) / 0.3   // fade out
+            if (lifeFrac < 0.15) return lifeFrac / 0.15        // fade in  (15 %)
+            if (lifeFrac > 0.6)  return (1 - lifeFrac) / 0.4   // fade out (40 %)
             return 1.0
         }
 
@@ -386,7 +398,10 @@ export function Brain3D(props: Brain3DProps) {
             return pts
         }
 
-        /* draw one continuous energy trail with lifespan alpha */
+        /* draw one continuous energy trail as batched polylines
+         * (4 bands instead of per-segment strokes = ~8 draw calls
+         *  instead of ~50, huge perf win) */
+        const TRAIL_BANDS = 4
         function drawTrailPath(
             pts: [number, number][],
             hue: number,
@@ -395,32 +410,36 @@ export function Brain3D(props: Brain3DProps) {
         ) {
             if (pts.length < 2) return
             const len = pts.length
+            const bandSize = Math.ceil(len / TRAIL_BANDS)
             ctx.lineCap = "round"; ctx.lineJoin = "round"
 
-            /* outer glow pass */
-            for (let k = 0; k < len - 1; k++) {
-                const frac  = k / len
-                const alpha = lifeAlpha * (1 - frac) * 0.25
-                const w     = baseW * 6 * (1 - frac * 0.7)
-                ctx.strokeStyle = "hsla(" + hue + ",100%,60%," + alpha + ")"
-                ctx.lineWidth = w
-                ctx.beginPath()
-                ctx.moveTo(pts[k][0], pts[k][1])
-                ctx.lineTo(pts[k + 1][0], pts[k + 1][1])
-                ctx.stroke()
-            }
+            for (let b = 0; b < TRAIL_BANDS; b++) {
+                const start = b * bandSize
+                const end   = Math.min(start + bandSize + 1, len)  // +1 overlap
+                if (end - start < 2) continue
+                const midFrac = (start + end) / 2 / len  // 0 head, 1 tail
 
-            /* inner bright trail */
-            for (let k = 0; k < len - 1; k++) {
-                const frac  = k / len
-                const alpha = lifeAlpha * (1 - frac) * 0.85
-                const lum   = 55 + (1 - frac) * 35
-                const w     = baseW * (1.8 - frac * 1.2)
-                ctx.strokeStyle = "hsla(" + hue + ",95%," + lum + "%," + alpha + ")"
-                ctx.lineWidth = w
+                /* outer glow band */
+                const ga = lifeAlpha * (1 - midFrac) * 0.22
+                if (ga > 0.005) {
+                    const gw = baseW * 5 * (1 - midFrac * 0.7)
+                    ctx.strokeStyle = "hsla(" + hue + ",100%,60%," + ga + ")"
+                    ctx.lineWidth = gw
+                    ctx.beginPath()
+                    ctx.moveTo(pts[start][0], pts[start][1])
+                    for (let k = start + 1; k < end; k++) ctx.lineTo(pts[k][0], pts[k][1])
+                    ctx.stroke()
+                }
+
+                /* inner bright band */
+                const ia = lifeAlpha * (1 - midFrac) * 0.8
+                const il = 55 + (1 - midFrac) * 35
+                const iw = baseW * (1.6 - midFrac * 1.0)
+                ctx.strokeStyle = "hsla(" + hue + ",95%," + il + "%," + ia + ")"
+                ctx.lineWidth = iw
                 ctx.beginPath()
-                ctx.moveTo(pts[k][0], pts[k][1])
-                ctx.lineTo(pts[k + 1][0], pts[k + 1][1])
+                ctx.moveTo(pts[start][0], pts[start][1])
+                for (let k = start + 1; k < end; k++) ctx.lineTo(pts[k][0], pts[k][1])
                 ctx.stroke()
             }
         }
