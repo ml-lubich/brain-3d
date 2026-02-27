@@ -74,6 +74,8 @@ export function Brain3D({ width = 960, height = 700, className = "" }: Brain3DPr
 
         const verts = window.COMPLETE_BRAIN_VERTICES
         const edges = window.COMPLETE_BRAIN_EDGES
+        if (!verts || !edges) return
+
         const numVerts = verts.length
         const numEdges = edges.length
 
