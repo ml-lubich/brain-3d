@@ -86,8 +86,8 @@ interface Orb {
 const DEFAULTS = {
     width: 960, height: 700, responsive: false,
     edgeStride: 1, dataPath: "/brain-data.js",
-    orbCount: 90, orbTrailLength: 18, orbSpeed: 0.015,
-    orbHueMin: 185, orbHueMax: 235, orbSize: 2.5, orbsOn: true,
+    orbCount: 90, orbTrailLength: 40, orbSpeed: 0.015,
+    orbHueMin: 185, orbHueMax: 235, orbSize: 3, orbsOn: true,
     rotationOn: true, rotationSpeed: 0.005,
     grabDepth: 4, springBack: 0.012,
     wireColor: "rgba(0,170,255,0.13)", wireWidth: 0.4,
@@ -201,6 +201,7 @@ export function Brain3D(props: Brain3DProps) {
 
         // Mouse / touch state
         let mouseDown = false
+        let shiftHeld = false
         let mouseX = 0, mouseY = 0, prevMouseX = 0, prevMouseY = 0
         let grabbedVerts: { idx: number; weight: number }[] = []
 
@@ -281,44 +282,70 @@ export function Brain3D(props: Brain3DProps) {
             orb.t = Math.max(0, Math.min(1, orb.t))
         }
 
-        // Draw orbs + trails
+        // Build trail screen-coords for one orb (head position prepended)
+        function buildTrailPts(orb: Orb, ox: number, oy: number) {
+            const pts: [number, number][] = [[ox, oy]]
+            for (let k = 0; k < orb.trail.length; k++) {
+                const [px, py] = edgePos(orb.trail[k].edgeIdx, orb.trail[k].t)
+                // skip if huge jump (edge wrap)
+                const prev = pts[pts.length - 1]
+                if ((px - prev[0]) ** 2 + (py - prev[1]) ** 2 > 2500) break
+                pts.push([px, py])
+            }
+            return pts
+        }
+
+        // Draw a continuous energy trail path
+        function drawTrailPath(pts: [number, number][], hue: number, baseW: number) {
+            if (pts.length < 2) return
+            const len = pts.length
+
+            // Outer glow pass — wide, very transparent
+            ctx.lineCap = "round"; ctx.lineJoin = "round"
+            for (let k = 0; k < len - 1; k++) {
+                const frac = k / len  // 0 at head, 1 at tail
+                const alpha = (1 - frac) * 0.25
+                const w = baseW * 6 * (1 - frac * 0.7)
+                ctx.strokeStyle = `hsla(${hue},100%,60%,${alpha})`
+                ctx.lineWidth = w
+                ctx.beginPath(); ctx.moveTo(pts[k][0], pts[k][1]); ctx.lineTo(pts[k + 1][0], pts[k + 1][1]); ctx.stroke()
+            }
+
+            // Inner bright trail — narrower, higher opacity
+            for (let k = 0; k < len - 1; k++) {
+                const frac = k / len
+                const alpha = (1 - frac) * 0.85
+                const lum = 55 + (1 - frac) * 35
+                const w = baseW * (1.8 - frac * 1.2)
+                ctx.strokeStyle = `hsla(${hue},95%,${lum}%,${alpha})`
+                ctx.lineWidth = w
+                ctx.beginPath(); ctx.moveTo(pts[k][0], pts[k][1]); ctx.lineTo(pts[k + 1][0], pts[k + 1][1]); ctx.stroke()
+            }
+        }
+
+        // Draw orbs + energy trails
         function drawOrbs() {
             if (!showOrbsRef.current) return
             for (const orb of orbs) {
                 advanceOrb(orb)
                 const [ox, oy] = edgePos(orb.edgeIdx, orb.t)
 
-                // Trail
-                const trail = orb.trail
-                if (trail.length > 1) {
-                    for (let k = trail.length - 1; k >= 1; k--) {
-                        const age = k / trail.length
-                        const [x1, y1] = edgePos(trail[k].edgeIdx, trail[k].t)
-                        const [x2, y2] = edgePos(trail[k - 1].edgeIdx, trail[k - 1].t)
-                        if ((x2 - x1) ** 2 + (y2 - y1) ** 2 > 2500) continue
-                        ctx.strokeStyle = `hsla(${orb.hue},95%,${50 + (1 - age) * 35}%,${(1 - age) * 0.7})`
-                        ctx.lineWidth = orb.size * (1 - age * 0.65)
-                        ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke()
-                    }
-                    const [tx, ty] = edgePos(trail[0].edgeIdx, trail[0].t)
-                    if ((ox - tx) ** 2 + (oy - ty) ** 2 < 2500) {
-                        ctx.strokeStyle = `hsla(${orb.hue},100%,78%,0.8)`
-                        ctx.lineWidth = orb.size * 0.9
-                        ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(ox, oy); ctx.stroke()
-                    }
-                }
+                // Energy trail
+                const pts = buildTrailPts(orb, ox, oy)
+                drawTrailPath(pts, orb.hue, orb.size)
 
-                // Glow
-                const g = ctx.createRadialGradient(ox, oy, 0, ox, oy, orb.size * 7)
-                g.addColorStop(0, `hsla(${orb.hue},100%,92%,0.9)`)
-                g.addColorStop(0.12, `hsla(${orb.hue},100%,70%,0.55)`)
-                g.addColorStop(0.35, `hsla(${orb.hue},90%,50%,0.15)`)
+                // Head glow
+                const g = ctx.createRadialGradient(ox, oy, 0, ox, oy, orb.size * 8)
+                g.addColorStop(0, `hsla(${orb.hue},100%,95%,0.95)`)
+                g.addColorStop(0.08, `hsla(${orb.hue},100%,80%,0.7)`)
+                g.addColorStop(0.25, `hsla(${orb.hue},100%,60%,0.25)`)
+                g.addColorStop(0.5, `hsla(${orb.hue},90%,50%,0.08)`)
                 g.addColorStop(1, `hsla(${orb.hue},80%,40%,0)`)
-                ctx.fillStyle = g; ctx.beginPath(); ctx.arc(ox, oy, orb.size * 7, 0, Math.PI * 2); ctx.fill()
+                ctx.fillStyle = g; ctx.beginPath(); ctx.arc(ox, oy, orb.size * 8, 0, Math.PI * 2); ctx.fill()
 
-                // Core
+                // Bright core
                 ctx.fillStyle = `hsla(${orb.hue},60%,97%,0.95)`
-                ctx.beginPath(); ctx.arc(ox, oy, orb.size * 0.7, 0, Math.PI * 2); ctx.fill()
+                ctx.beginPath(); ctx.arc(ox, oy, orb.size * 0.8, 0, Math.PI * 2); ctx.fill()
             }
         }
 
@@ -386,19 +413,31 @@ export function Brain3D(props: Brain3DProps) {
         function onDown(e: MouseEvent | TouchEvent) {
             if ("touches" in e) e.preventDefault()
             mouseDown = true; canvas.style.cursor = "grabbing"
+            shiftHeld = !("touches" in e) && (e as MouseEvent).shiftKey
             const p = getPos(e); mouseX = prevMouseX = p[0]; mouseY = prevMouseY = p[1]
-            const nearest = closestVertex(mouseX, mouseY)
-            if (nearest >= 0) grabbedVerts = collectThreadVerts(nearest)
+            if (shiftHeld) {
+                // Shift+drag = pull mesh
+                const nearest = closestVertex(mouseX, mouseY)
+                if (nearest >= 0) grabbedVerts = collectThreadVerts(nearest)
+            }
         }
         function onMove(e: MouseEvent | TouchEvent) {
             if ("touches" in e) e.preventDefault()
             const p = getPos(e); mouseX = p[0]; mouseY = p[1]
-            if (mouseDown && grabbedVerts.length > 0) {
-                applyThreadDrag(mouseX - prevMouseX, mouseY - prevMouseY)
-                prevMouseX = mouseX; prevMouseY = mouseY
+            const deltaX = mouseX - prevMouseX
+            const deltaY = mouseY - prevMouseY
+            if (mouseDown) {
+                if (shiftHeld && grabbedVerts.length > 0) {
+                    // Pull mesh
+                    applyThreadDrag(deltaX, deltaY)
+                } else {
+                    // Rotate brain
+                    angle += deltaX * 0.005
+                }
             }
+            prevMouseX = mouseX; prevMouseY = mouseY
         }
-        function onUp() { mouseDown = false; grabbedVerts = []; canvas.style.cursor = "grab" }
+        function onUp() { mouseDown = false; shiftHeld = false; grabbedVerts = []; canvas.style.cursor = "grab" }
 
         canvas.addEventListener("mousedown", onDown)
         canvas.addEventListener("mousemove", onMove)
