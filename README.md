@@ -43,6 +43,7 @@ flowchart LR
 - [License](#license)
 - [Files](#files)
 - [🗺️ Repository map](#️-repository-map)
+- [📊 Code composition](#-code-composition)
 
 ## Render loop (algorithm)
 
@@ -168,4 +169,20 @@ mindmap
       README.md
       index.html
       package.json
+```
+
+
+## 📊 Code composition
+
+File-type breakdown of source under this repo (skips `.git`, `node_modules`, build caches, lockfiles).
+
+```mermaid
+pie showData title File-type composition of brain-3d (18 files)
+    "TypeScript" : 5
+    "JavaScript" : 3
+    "JSON" : 3
+    "Markdown" : 3
+    "Other" : 2
+    "HTML" : 1
+    "CSS" : 1
 ```
