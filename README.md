@@ -35,11 +35,52 @@ flowchart LR
 ## Table of contents
 
 - [Install](#install)
+- [Render loop (algorithm)](#render-loop-algorithm)
+- [Drag interaction (sequence)](#drag-interaction-sequence)
 - [Usage (React / Next.js)](#usage-react--nextjs)
 - [Key Props](#key-props)
 - [Docs](#docs)
 - [License](#license)
 - [Files](#files)
+
+## Render loop (algorithm)
+
+```mermaid
+flowchart LR
+    A([requestAnimationFrame])
+    B["rotate verts<br/>quaternion · auto-spin"]
+    C["3D → 2D project<br/>perspective divide"]
+    D{"edge index<br/>% edgeStride == 0?"}
+    E["draw edge<br/>Canvas 2D"]
+    F["advance orbs<br/>along edges"]
+    G["draw orbs<br/>hue ramp"]
+    H["spring back<br/>grabbed verts"]
+    A --> B --> C --> D
+    D -- "yes" --> E --> F --> G --> H --> A
+    D -- "no"  --> F
+```
+
+## Drag interaction (sequence)
+
+```mermaid
+sequenceDiagram
+    participant U as user
+    participant E as Brain3D events
+    participant V as vertex graph
+    participant R as render loop
+
+    U->>E: pointerdown(x,y)
+    E->>V: pick nearest vertex
+    E->>V: BFS up to grabDepth
+    U->>E: pointermove(dx,dy)
+    E->>V: translate grabbed verts
+    R-->>U: redraw with deformed mesh
+    U->>E: pointerup
+    E->>V: release · springBack
+    loop until rest
+        R->>V: lerp toward original
+    end
+```
 
 ## Install
 
