@@ -42,6 +42,7 @@ flowchart LR
 - [Docs](#docs)
 - [License](#license)
 - [Files](#files)
+- [🗺️ Repository map](#️-repository-map)
 
 ## Render loop (algorithm)
 
@@ -143,3 +144,28 @@ Full prop reference: [docs/configuration.md](docs/configuration.md)
 
 - `brain-3d.js` — data + renderer (single file, importable)
 - `index.html` — minimal demo
+
+
+## 🗺️ Repository map
+
+Top-level layout of `brain-3d` rendered as a Mermaid mindmap (auto-generated from the on-disk tree).
+
+```mermaid
+mindmap
+  root((brain-3d))
+    app/
+      next-env.d.ts
+      next.config.ts
+      package.json
+      postcss.config.mjs
+      public
+      src
+    docs/
+      architecture.md
+      configuration.md
+    files
+      LICENSE
+      README.md
+      index.html
+      package.json
+```
